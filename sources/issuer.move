@@ -70,7 +70,7 @@ module aptree::issuer {
     #[event]
     struct ConsumablePurchase has store, drop {
         id: string::String,
-        for: address,
+        for: address
     }
 
     struct Consumable has store, drop {
@@ -320,16 +320,15 @@ module aptree::issuer {
 
     }
 
-    entry fun create_consumable(admin: &signer, id: string::String, price: u64) acquires TreeRegistry {
+    entry fun create_consumable(
+        admin: &signer, id: string::String, price: u64
+    ) acquires TreeRegistry {
         assert!(address_of(admin) == @aptree, EOperationNotPermitted);
 
         let resource_address = account::create_resource_address(&@aptree, SEED);
         let registry = borrow_global_mut<TreeRegistry>(resource_address);
 
-        let consumable = Consumable {
-            id,
-            price
-        };
+        let consumable = Consumable { id, price };
 
         vector::push_back(&mut registry.consumables, consumable);
 
@@ -349,14 +348,13 @@ module aptree::issuer {
 
         coin::transfer<AptosCoin>(user, registry.treasury, consumable.price);
 
-        emit(ConsumablePurchase {
-            id,
-            for: user_address
-        })
+        emit(ConsumablePurchase { id, for: user_address })
 
     }
 
-    entry fun gift_consumable(admin: &signer, receiver: address, id: string::String) acquires TreeRegistry {
+    entry fun gift_consumable(
+        admin: &signer, receiver: address, id: string::String
+    ) acquires TreeRegistry {
         assert!(address_of(admin) == @aptree, EOperationNotPermitted);
 
         let resource_address = account::create_resource_address(&@aptree, SEED);
@@ -368,12 +366,8 @@ module aptree::issuer {
 
         let consumable = vector::borrow(&registry.consumables, index);
 
-        emit(ConsumablePurchase {
-            for: receiver,
-            id
-        })
+        emit(ConsumablePurchase { for: receiver, id })
     }
-
 
     inline fun get_description(type: u64, specie: string::String): string::String {
         if (type == 0) {
