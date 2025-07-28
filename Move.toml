@@ -4,7 +4,7 @@ version = "1.0.0"
 authors = []
 
 [addresses]
-aptree="0x648be6c220b99f1a769c431c946a6aaa46d4d9d2712fe21f4a0efbd3ad76be41"
+aptree="0x14abcf0289fa56bdefd7e8fc5dd67d1503747e80cb272b763884e218cae6445b"
 
 [dev-addresses]
 

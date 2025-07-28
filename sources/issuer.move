@@ -2,12 +2,16 @@
 The aptree issuer handles the minting and distribution of new trees.
 It also maintains control of the tree registry.
 The tree registry is an onchain representation of the trees species that are valid in the aptree context.
+It also manages the purchases of consumables
 **/
 module aptree::issuer {
 
     use std::option;
+    use std::signer;
     use std::signer::address_of;
     use std::string;
+    use std::vector;
+    use aptos_std::debug;
     use aptos_framework::account;
     use aptos_framework::account::{create_signer_with_capability, create_resource_address};
     use aptos_framework::aptos_coin::AptosCoin;
@@ -19,8 +23,8 @@ module aptree::issuer {
     use aptos_token_objects::token;
     #[test_only]
     use std::signer;
-    #[test_only]
-    use aptos_std::debug;
+    // #[test_only]
+    // use aptos_std::debug;
     #[test_only]
     use aptos_framework::timestamp;
 
@@ -57,6 +61,23 @@ module aptree::issuer {
         id: string::String
     }
 
+    #[event]
+    struct AddConsumable has store, drop {
+        id: string::String,
+        price: u64
+    }
+
+    #[event]
+    struct ConsumablePurchase has store, drop {
+        id: string::String,
+        for: address,
+    }
+
+    struct Consumable has store, drop {
+        id: string::String,
+        price: u64
+    }
+
     struct TreeRegistry has key {
         signer_capability: account::SignerCapability,
         seed_collection_mutator_ref: collection::MutatorRef,
@@ -64,7 +85,8 @@ module aptree::issuer {
         issued_seeds: u64,
         planted_trees: u64,
         metadata_base_uri: string::String,
-        growth_freeze_price: u64
+        consumables: vector<Consumable>,
+        treasury: address
     }
 
     #[event]
@@ -124,7 +146,8 @@ module aptree::issuer {
             seed_collection_mutator_ref: seed_registry_mutator_ref,
             signer_capability,
             metadata_base_uri: string::utf8(METADATA_BASE_URI),
-            growth_freeze_price: 30000000
+            consumables: vector[],
+            treasury: signer::address_of(admin)
         };
 
         move_to<TreeRegistry>(&resource_account_signer, registry);
@@ -135,6 +158,7 @@ module aptree::issuer {
         for_address: address,
         seed_hash: string::String,
         specie: string::String,
+        specie_name: string::String,
         index: string::String
     ) acquires TreeRegistry {
         assert!(address_of(admin) == @aptree, EOperationNotPermitted);
@@ -151,9 +175,11 @@ module aptree::issuer {
 
         let seed_name = string::utf8(b"");
 
-        string::append(&mut seed_name, specie);
+        string::append(&mut seed_name, specie_name);
         string::append(&mut seed_name, string::utf8(b" #"));
         string::append(&mut seed_name, index);
+
+        debug::print(&seed_name);
 
         registry.issued_seeds = registry.issued_seeds + 1;
 
@@ -294,16 +320,60 @@ module aptree::issuer {
 
     }
 
-    entry fun purchase_freeze(user: &signer) acquires TreeRegistry {
-        let user_address = address_of(user);
-        let resource_address = account::create_resource_address(&@aptree, SEED);
+    entry fun create_consumable(admin: &signer, id: string::String, price: u64) acquires TreeRegistry {
+        assert!(address_of(admin) == @aptree, EOperationNotPermitted);
 
+        let resource_address = account::create_resource_address(&@aptree, SEED);
         let registry = borrow_global_mut<TreeRegistry>(resource_address);
 
-        coin::transfer<AptosCoin>(user, @aptree, registry.growth_freeze_price);
+        let consumable = Consumable {
+            id,
+            price
+        };
 
-        emit(PurchaseGrowthFreeze { address: user_address })
+        vector::push_back(&mut registry.consumables, consumable);
+
+        emit(AddConsumable { id, price });
     }
+
+    entry fun purchase_consumable(user: &signer, id: string::String) acquires TreeRegistry {
+        let user_address = address_of(user);
+        let resource_address = account::create_resource_address(&@aptree, SEED);
+        let registry = borrow_global_mut<TreeRegistry>(resource_address);
+
+        let (exists, index) = vector::find(&registry.consumables, |c| c.id == id);
+
+        assert!(exists, EOperationNotPermitted);
+
+        let consumable = vector::borrow(&registry.consumables, index);
+
+        coin::transfer<AptosCoin>(user, registry.treasury, consumable.price);
+
+        emit(ConsumablePurchase {
+            id,
+            for: user_address
+        })
+
+    }
+
+    entry fun gift_consumable(admin: &signer, receiver: address, id: string::String) acquires TreeRegistry {
+        assert!(address_of(admin) == @aptree, EOperationNotPermitted);
+
+        let resource_address = account::create_resource_address(&@aptree, SEED);
+        let registry = borrow_global_mut<TreeRegistry>(resource_address);
+
+        let (exists, index) = vector::find(&registry.consumables, |c| c.id == id);
+
+        assert!(exists, EOperationNotPermitted);
+
+        let consumable = vector::borrow(&registry.consumables, index);
+
+        emit(ConsumablePurchase {
+            for: receiver,
+            id
+        })
+    }
+
 
     inline fun get_description(type: u64, specie: string::String): string::String {
         if (type == 0) {
@@ -400,7 +470,6 @@ module aptree::issuer {
         // ✅ sanity checks
         assert!(registry.issued_seeds == 0, 1);
         assert!(registry.planted_trees == 0, 2);
-        assert!(registry.growth_freeze_price == 30000000, 3);
     }
 
     #[test(admin = @aptree, user = @0x5)]
@@ -506,67 +575,5 @@ module aptree::issuer {
             );
         let seed_obj = object::address_to_object<aptree::issuer::Seed>(seed_token_addr);
         assert!(object::is_owner(seed_obj, reg_addr), 6);
-    }
-
-    #[test]
-    fun test_purchase_growth_freeze_success() acquires aptree::issuer::TreeRegistry {
-        /* ── 1️⃣  Framework + clock bootstrap ─────────────────────────── */
-        let framework = account::create_account_for_test(@0x1);
-        let admin = account::create_account_for_test(@aptree);
-        let user = account::create_account_for_test(@0x5);
-        timestamp::set_time_has_started_for_testing(&framework);
-        coin::create_coin_conversion_map(&framework);
-
-        /* ── 2️⃣  Init issuer module ───────────────────────────────────── */
-        aptree::issuer::init_module(&admin);
-
-        // create the coin (once per test world)
-
-        let (burn, freeze, mint) =
-            coin::initialize<AptosCoin>(
-                &framework,
-                string::utf8(b"Aptos"),
-                string::utf8(b"APT"),
-                8,
-                false
-            );
-
-        // register both parties
-        coin::register<AptosCoin>(&admin); // @aptree receives the fee
-        coin::register<AptosCoin>(&user);
-
-        // fund user with 100_000_000
-        let coins = coin::mint<AptosCoin>(1000000000, &mint);
-        coin::deposit(signer::address_of(&user), coins);
-
-        /* ── 4️⃣  Snapshot balances pre-purchase ───────────────────────── */
-        let addr_user = signer::address_of(&user);
-        let addr_platform = @aptree;
-
-        let bal_user_before = coin::balance<AptosCoin>(addr_user);
-        let bal_platform_before = coin::balance<AptosCoin>(addr_platform);
-
-        /* ── 5️⃣  Execute purchase_freeze (entry) ──────────────────────── */
-        aptree::issuer::purchase_freeze(&user);
-
-        /* ── 6️⃣  Load registry to get canonical price & sanity check ─── */
-        let reg_addr = account::create_resource_address(&@aptree, aptree::issuer::SEED);
-        let registry = borrow_global<aptree::issuer::TreeRegistry>(reg_addr);
-        let price = registry.growth_freeze_price; // 30_000_000 by default
-
-        /* ── 7️⃣  Assert balance movements ────────────────────────────── */
-        let bal_user_after = coin::balance<AptosCoin>(addr_user);
-        let bal_platform_after = coin::balance<AptosCoin>(addr_platform);
-
-        assert!(bal_user_before - bal_user_after == price, 1);
-        assert!(
-            bal_platform_after - bal_platform_before == price,
-            2
-        );
-
-        /* ── 8️⃣  tidy up created caps ─────────────────────────────────── */
-        coin::destroy_burn_cap(burn);
-        coin::destroy_freeze_cap(freeze);
-        coin::destroy_mint_cap(mint);
     }
 }
