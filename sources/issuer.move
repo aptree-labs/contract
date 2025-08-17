@@ -19,20 +19,21 @@ module aptree::issuer {
     use aptos_framework::event::emit;
     use aptos_framework::object;
     use aptos_token_objects::collection;
+    use aptos_token_objects::royalty;
     use aptos_token_objects::token;
     #[test_only]
     use aptos_framework::timestamp;
 
-    const SEED: vector<u8> = b"Aptree";
-    const SEED_REGISTRY_NAME: vector<u8> = b"Aptree Seed Nursery";
+    const SEED: vector<u8> = b"APTree";
+    const SEED_REGISTRY_NAME: vector<u8> = b"APTree Seed Nursery";
     const SEED_REGISTRY_DESCRIPTION: vector<u8> = b"A collection of seeds waiting to be planted. Each one holds the potential for growth but only action can unlock it. Plant your seed, and begin the journey.";
     const SEED_REGISTY_IMAGE: vector<u8> = b"https://raw.githubusercontent.com/aptree-labs/registry/refs/heads/main/collection-refs/seed.jpg";
 
-    const PLANTATION_REGISTRY_NAME: vector<u8> = b"Aptree Tree Plantation";
+    const PLANTATION_REGISTRY_NAME: vector<u8> = b"APTree Plantation";
     const PLANTATION_REGISTRY_DESCRIPTION: vector<u8> = b"These seeds have been planted and are now growing. Water them daily, stay consistent, and watch them evolve into something meaningful.";
     const PLANTATION_REGISTRY_IMAGE: vector<u8> = b"https://raw.githubusercontent.com/aptree-labs/registry/refs/heads/main/collection-refs/plantation.jpg";
 
-    const METADATA_BASE_URI: vector<u8> = b"https://preview-dropgen.aptree.io/metadata/plant";
+    const METADATA_BASE_URI: vector<u8> = b"https://dropgen.aptree.io/metadata";
 
     // Errors
     const EOperationNotPermitted: u64 = 403;
@@ -135,12 +136,14 @@ module aptree::issuer {
         let seed_registry_mutator_ref =
             collection::generate_mutator_ref(&seed_collection_constructor_ref);
 
+        let plantation_royalty = royalty::create(5, 100, @aptree);
+
         let plantation_collection_constructor_ref =
             collection::create_unlimited_collection(
                 &resource_account_signer,
                 string::utf8(PLANTATION_REGISTRY_DESCRIPTION),
                 string::utf8(PLANTATION_REGISTRY_NAME),
-                option::none(),
+                option::some(plantation_royalty),
                 string::utf8(PLANTATION_REGISTRY_IMAGE)
             );
 
@@ -328,7 +331,7 @@ module aptree::issuer {
 
     }
 
-    public fun plant_v1(
+    public entry fun plant_v1(
         user: &signer,
         service_account: &signer,
         seed_name: string::String,
@@ -344,7 +347,7 @@ module aptree::issuer {
         } else if (planter_type == 3) {
             coin::transfer<AptosCoin>(user, @service_account, 100_000_000)
         } else {
-            assert!(false, EInvalidPlanterType);
+            abort EInvalidPlanterType;
         }
     }
 
@@ -400,9 +403,7 @@ module aptree::issuer {
 
     }
 
-    entry fun remove_consumable(
-        admin: &signer, id: string::String, price: u64
-    ) acquires TreeRegistry {
+    entry fun remove_consumable(admin: &signer, id: string::String) acquires TreeRegistry {
         assert!(address_of(admin) == @aptree, EOperationNotPermitted);
 
         let resource_address = account::create_resource_address(&@aptree, SEED);
@@ -549,7 +550,14 @@ module aptree::issuer {
 
         // 🪄  call entry
 
-        issue_seed(admin, recipient, seed_hash, specie, specie_name, index);
+        issue_seed(
+            admin,
+            recipient,
+            seed_hash,
+            specie,
+            specie_name,
+            index
+        );
 
         // 🔎 registry updates
         let reg_addr = account::create_resource_address(&@aptree, aptree::issuer::SEED);
@@ -595,7 +603,14 @@ module aptree::issuer {
         let specie_name = string::utf8(b"Acacia");
         let recipient = signer::address_of(user);
 
-        aptree::issuer::issue_seed(admin, recipient, seed_hash, specie, specie_name, index);
+        aptree::issuer::issue_seed(
+            admin,
+            recipient,
+            seed_hash,
+            specie,
+            specie_name,
+            index
+        );
 
         /* ── 4️⃣  User plants that same seed ─────────────────────────────── */
         // Build the seed's token-name string:  "acacia #1"
