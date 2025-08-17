@@ -18,31 +18,29 @@ module aptree::issuer {
     use aptos_framework::coin;
     use aptos_framework::event::emit;
     use aptos_framework::object;
-    use aptos_token_objects::aptos_token::AptosToken;
     use aptos_token_objects::collection;
+    use aptos_token_objects::royalty;
     use aptos_token_objects::token;
-    #[test_only]
-    use std::signer;
-    // #[test_only]
-    // use aptos_std::debug;
     #[test_only]
     use aptos_framework::timestamp;
 
-    const SEED: vector<u8> = b"Aptree";
-    const SEED_REGISTRY_NAME: vector<u8> = b"Aptree Seed Nursery";
+    const SEED: vector<u8> = b"APTree";
+    const SEED_REGISTRY_NAME: vector<u8> = b"APTree Seed Nursery";
     const SEED_REGISTRY_DESCRIPTION: vector<u8> = b"A collection of seeds waiting to be planted. Each one holds the potential for growth but only action can unlock it. Plant your seed, and begin the journey.";
-    const SEED_REGISTY_IMAGE: vector<u8> = b"https://raw.githubusercontent.com/aptree-labs/registry/refs/heads/main/png/arcacia/background.png";
+    const SEED_REGISTY_IMAGE: vector<u8> = b"https://raw.githubusercontent.com/aptree-labs/registry/refs/heads/main/collection-refs/seed.jpg";
 
-    const PLANTATION_REGISTRY_NAME: vector<u8> = b"Aptree Tree Plantation";
+    const PLANTATION_REGISTRY_NAME: vector<u8> = b"APTree Plantation";
     const PLANTATION_REGISTRY_DESCRIPTION: vector<u8> = b"These seeds have been planted and are now growing. Water them daily, stay consistent, and watch them evolve into something meaningful.";
-    const PLANTATION_REGISTRY_IMAGE: vector<u8> = b"https://raw.githubusercontent.com/aptree-labs/registry/refs/heads/main/png/arcacia/background.png";
+    const PLANTATION_REGISTRY_IMAGE: vector<u8> = b"https://raw.githubusercontent.com/aptree-labs/registry/refs/heads/main/collection-refs/plantation.jpg";
 
-    const METADATA_BASE_URI: vector<u8> = b"https://drogen-development.up.railway.app/metadata";
+    const METADATA_BASE_URI: vector<u8> = b"https://dropgen.aptree.io/metadata";
 
     // Errors
     const EOperationNotPermitted: u64 = 403;
     const ERegistryUnInitialized: u64 = 404;
     const ESeedAlreadyPlantedOrDoesNotExist: u64 = 405;
+    const EServiceAccountInvalid: u64 = 406;
+    const EInvalidPlanterType: u64 = 407;
 
     struct Seed has key, store, drop {
         token_mutator_ref: token::MutatorRef,
@@ -65,6 +63,17 @@ module aptree::issuer {
     struct AddConsumable has store, drop {
         id: string::String,
         price: u64
+    }
+
+    #[event]
+    struct UpdatedConsumablePrice has store, drop {
+        id: string::String,
+        price: u64
+    }
+
+    #[event]
+    struct RemovedConsumable has store, drop {
+        id: string::String
     }
 
     #[event]
@@ -127,12 +136,14 @@ module aptree::issuer {
         let seed_registry_mutator_ref =
             collection::generate_mutator_ref(&seed_collection_constructor_ref);
 
+        let plantation_royalty = royalty::create(5, 100, @aptree);
+
         let plantation_collection_constructor_ref =
             collection::create_unlimited_collection(
                 &resource_account_signer,
                 string::utf8(PLANTATION_REGISTRY_DESCRIPTION),
                 string::utf8(PLANTATION_REGISTRY_NAME),
-                option::none(),
+                option::some(plantation_royalty),
                 string::utf8(PLANTATION_REGISTRY_IMAGE)
             );
 
@@ -147,7 +158,7 @@ module aptree::issuer {
             signer_capability,
             metadata_base_uri: string::utf8(METADATA_BASE_URI),
             consumables: vector[],
-            treasury: signer::address_of(admin)
+            treasury: @service_account
         };
 
         move_to<TreeRegistry>(&resource_account_signer, registry);
@@ -233,7 +244,7 @@ module aptree::issuer {
 
     }
 
-    entry fun plant_seed(user: &signer, seed_name: string::String) acquires Seed, TreeRegistry {
+    fun plant_seed(user: &signer, seed_name: string::String) acquires Seed, TreeRegistry {
         let user_address = address_of(user);
         let resource_address = account::create_resource_address(&@aptree, SEED);
 
@@ -320,6 +331,26 @@ module aptree::issuer {
 
     }
 
+    public entry fun plant_v1(
+        user: &signer,
+        service_account: &signer,
+        seed_name: string::String,
+        planter_type: u64
+    ) acquires Seed, TreeRegistry {
+        assert!(address_of(service_account) == @service_account, EServiceAccountInvalid);
+        plant_seed(user, seed_name);
+
+        if (planter_type == 1) {
+            coin::transfer<AptosCoin>(user, @service_account, 10_000_000)
+        } else if (planter_type == 2) {
+            coin::transfer<AptosCoin>(user, @service_account, 50_000_000)
+        } else if (planter_type == 3) {
+            coin::transfer<AptosCoin>(user, @service_account, 100_000_000)
+        } else {
+            abort EInvalidPlanterType;
+        }
+    }
+
     entry fun create_consumable(
         admin: &signer, id: string::String, price: u64
     ) acquires TreeRegistry {
@@ -349,6 +380,41 @@ module aptree::issuer {
         coin::transfer<AptosCoin>(user, registry.treasury, consumable.price);
 
         emit(ConsumablePurchase { id, for: user_address })
+
+    }
+
+    entry fun update_consumable_price(
+        admin: &signer, id: string::String, price: u64
+    ) acquires TreeRegistry {
+        assert!(address_of(admin) == @aptree, EOperationNotPermitted);
+
+        let resource_address = account::create_resource_address(&@aptree, SEED);
+        let registry = borrow_global_mut<TreeRegistry>(resource_address);
+
+        let (exists, index) = vector::find(&registry.consumables, |c| c.id == id);
+
+        assert!(exists, EOperationNotPermitted);
+
+        let consumable = vector::borrow_mut(&mut registry.consumables, index);
+
+        consumable.price = price;
+
+        emit(UpdatedConsumablePrice { id, price });
+
+    }
+
+    entry fun remove_consumable(admin: &signer, id: string::String) acquires TreeRegistry {
+        assert!(address_of(admin) == @aptree, EOperationNotPermitted);
+
+        let resource_address = account::create_resource_address(&@aptree, SEED);
+        let registry = borrow_global_mut<TreeRegistry>(resource_address);
+
+        let (exists, index) = vector::find(&registry.consumables, |c| c.id == id);
+
+        assert!(exists, EOperationNotPermitted);
+
+        vector::remove(&mut registry.consumables, index);
+        emit(RemovedConsumable { id });
 
     }
 
@@ -477,12 +543,21 @@ module aptree::issuer {
 
         // 🌱 parameters for the new seed
         let specie = string::utf8(b"acacia");
+        let specie_name = string::utf8(b"Acacia");
         let seed_hash = string::utf8(b"hash123");
         let index = string::utf8(b"1");
         let recipient = signer::address_of(user);
 
         // 🪄  call entry
-        aptree::issuer::issue_seed(admin, recipient, seed_hash, specie, index);
+
+        issue_seed(
+            admin,
+            recipient,
+            seed_hash,
+            specie,
+            specie_name,
+            index
+        );
 
         // 🔎 registry updates
         let reg_addr = account::create_resource_address(&@aptree, aptree::issuer::SEED);
@@ -492,7 +567,7 @@ module aptree::issuer {
         // 🔎 the seed object must exist and be owned by `recipient`
         // build expected seed name:  "acacia #1"
         let expected_name = string::utf8(b"");
-        string::append(&mut expected_name, specie);
+        string::append(&mut expected_name, specie_name);
         string::append(&mut expected_name, string::utf8(b" #"));
         string::append(&mut expected_name, index);
 
@@ -525,14 +600,22 @@ module aptree::issuer {
         let specie = string::utf8(b"acacia");
         let seed_hash = string::utf8(b"hash123");
         let index = string::utf8(b"1");
+        let specie_name = string::utf8(b"Acacia");
         let recipient = signer::address_of(user);
 
-        aptree::issuer::issue_seed(admin, recipient, seed_hash, specie, index);
+        aptree::issuer::issue_seed(
+            admin,
+            recipient,
+            seed_hash,
+            specie,
+            specie_name,
+            index
+        );
 
         /* ── 4️⃣  User plants that same seed ─────────────────────────────── */
         // Build the seed's token-name string:  "acacia #1"
         let seed_name = string::utf8(b"");
-        string::append(&mut seed_name, specie);
+        string::append(&mut seed_name, specie_name);
         string::append(&mut seed_name, string::utf8(b" #"));
         string::append(&mut seed_name, index);
 

@@ -1,3 +1,4 @@
 .aptos/
 build/
 .aptos-*/
+service-account
