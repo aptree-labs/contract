@@ -3,7 +3,6 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/aptree-contract.iml" filepath="$PROJECT_DIR$/.idea/aptree-contract.iml" />
-      <module fileurl="file://$PROJECT_DIR$/../../kade/orpheus/.idea/orpheus.iml" filepath="$PROJECT_DIR$/../../kade/orpheus/.idea/orpheus.iml" />
     </modules>
   </component>
 </project>
