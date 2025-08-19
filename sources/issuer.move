@@ -351,6 +351,11 @@ module aptree::issuer {
         }
     }
 
+    public entry fun plant_simple(user: &signer, seed_name: string::String) acquires Seed, TreeRegistry {
+        plant_seed(user, seed_name);
+        coin::transfer<AptosCoin>(user, @service_account, 10_000_000);
+    }
+
     entry fun create_consumable(
         admin: &signer, id: string::String, price: u64
     ) acquires TreeRegistry {
